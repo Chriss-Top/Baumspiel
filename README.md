@@ -12,6 +12,13 @@ Ein Browserspiel für zwei Kinder (ab ca. 6 Jahren) an einer Tastatur.
 
 Esc / P = Pause · M = Ton an/aus · F (nach einem Level) = Figuren wechseln
 
+## Auf dem Handy / Tablet
+Handy **quer** halten. Beide Kinder spielen an einem Gerät:
+- **Linke Bildschirmhälfte** = Spieler 1, **rechte Hälfte** = Spieler 2 – Daumen auflegen und schieben (Joystick).
+- Im Jet erscheint ein **Regenbogen-Knopf** für den Wirbel.
+- Oben in der Mitte ist der **Pause-Knopf**.
+- Auf dem iPhone am besten über „Teilen → Zum Home-Bildschirm“ öffnen, dann läuft es im Vollbild.
+
 ## Figuren
 Junge, Mädchen, Ritter, Prinzessin, Pirat, Astronaut, Roboter, Dino – jeweils in 8 Farben.
 Die Auswahl wird im Browser gespeichert.

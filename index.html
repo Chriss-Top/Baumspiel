@@ -2,11 +2,16 @@
 <html lang="de">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#1d3b1f">
 <title>Baumspiel – Fressmaul &amp; Jet</title>
 <style>
   html, body { margin: 0; height: 100%; background: #1d3b1f; overflow: hidden; }
-  canvas { display: block; width: 100vw; height: 100vh; }
+  html, body { overscroll-behavior: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+  canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 </style>
 </head>
 <body>
@@ -218,7 +223,92 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
-canvas.addEventListener('pointerdown', () => { initAudio(); onKey('Click'); });
+
+// ---------------- Touch / Maus ----------------
+let touchMode = false;
+try { touchMode = matchMedia('(pointer: coarse)').matches; } catch (e) { /* egal */ }
+const sticks = { 1: null, 2: null };
+const STICK_R = 75;
+const STICK_HOME = { 1: [150, VH - 150], 2: [VW - 150, VH - 150] };
+const WIRBEL_BTN = { 1: [95, VH - 335], 2: [VW - 95, VH - 335] };
+const PAUSE_BTN = [VW / 2, 118];
+let triedFullscreen = false;
+
+function toLogical(e) {
+  return [(e.clientX - offX) / scale, (e.clientY - offY) / scale];
+}
+function goFullscreen() {
+  if (triedFullscreen) return;
+  triedFullscreen = true;
+  try {
+    const el = document.documentElement;
+    const rq = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (rq) {
+      const pr = rq.call(el, { navigationUI: 'hide' });
+      if (pr && pr.then) pr.then(() => { try { screen.orientation.lock('landscape').catch(() => {}); } catch (e) { /* egal */ } }).catch(() => {});
+    }
+  } catch (e) { /* egal */ }
+}
+canvas.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  initAudio();
+  if (e.pointerType === 'touch') { touchMode = true; goFullscreen(); }
+  const [lx, ly] = toLogical(e);
+  if (state === 'play') {
+    if (touchMode && dist(lx, ly, PAUSE_BTN[0], PAUSE_BTN[1]) < 45) { state = 'pause'; return; }
+    for (const p of players) {
+      const [bx, by] = WIRBEL_BTN[p.id];
+      if (p.mode === 'jet' && !p.done && dist(lx, ly, bx, by) < 75) { tryWirbel(p); return; }
+    }
+    const side = lx < VW / 2 ? 1 : 2;
+    if (!sticks[side]) sticks[side] = { id: e.pointerId, ox: lx, oy: ly, x: lx, y: ly };
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* egal */ }
+  } else onTap(lx, ly);
+});
+canvas.addEventListener('pointermove', e => {
+  const [lx, ly] = toLogical(e);
+  for (const k of [1, 2]) {
+    const s = sticks[k];
+    if (s && s.id === e.pointerId) {
+      s.x = lx; s.y = ly;
+      // Basis wandert mit, wenn der Daumen weit wegrutscht
+      const d = dist(s.x, s.y, s.ox, s.oy);
+      if (d > STICK_R * 1.6) { s.ox = s.x - (s.x - s.ox) / d * STICK_R * 1.6; s.oy = s.y - (s.y - s.oy) / d * STICK_R * 1.6; }
+    }
+  }
+});
+function endPointer(e) { for (const k of [1, 2]) if (sticks[k] && sticks[k].id === e.pointerId) sticks[k] = null; }
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+canvas.addEventListener('lostpointercapture', endPointer);
+addEventListener('touchend', () => initAudio(), { passive: true });
+addEventListener('contextmenu', e => e.preventDefault());
+
+function onTap(lx, ly) {
+  if (state === 'title') { state = 'select'; stateT = 0; sfx.select(); return; }
+  if (state === 'pause') { state = 'play'; return; }
+  if (state === 'win') {
+    if (stateT <= 1.5) return;
+    if (Math.abs(ly - 565) < 35 && Math.abs(lx - VW / 2) < 220) { level++; state = 'select'; stateT = 0; sfx.select(); }
+    else startGame(level + 1);
+    return;
+  }
+  if (state === 'select') {
+    if (stateT > 0.3 && Math.abs(lx - VW / 2) < 290 && Math.abs(ly - 650) < 50) { startGame(level); return; }
+    for (const id of [1, 2]) {
+      const c = choice[id - 1];
+      const px = id === 1 ? 20 : VW - 430, cx = px + 205;
+      const change = (field, d, n) => { c[field] = (c[field] + d + n) % n; sfx.select(); saveChoice(); };
+      if (dist(lx, ly, px + 40, 320) < 60) { change('char', -1, CHARS.length); return; }
+      if (dist(lx, ly, px + 370, 320) < 60) { change('char', 1, CHARS.length); return; }
+      if (Math.abs(lx - cx) < 110 && ly > 170 && ly < 465) { change('char', 1, CHARS.length); return; }
+      const sw0 = cx - (SHIRTS.length - 1) * 22;
+      for (let i = 0; i < SHIRTS.length; i++) {
+        if (dist(lx, ly, sw0 + i * 44, 500) < 23) { c.shirt = i; sfx.select(); saveChoice(); return; }
+      }
+    }
+  }
+}
 
 // ---------------- Spielzustand ----------------
 let state = 'title';     // title | select | play | pause | win
@@ -402,8 +492,16 @@ function inputOf(p) {
   let ix = (keys[p.k.r] ? 1 : 0) - (keys[p.k.l] ? 1 : 0);
   let iy = (keys[p.k.d] ? 1 : 0) - (keys[p.k.u] ? 1 : 0);
   const l = Math.hypot(ix, iy);
-  if (l) { ix /= l; iy /= l; }
-  return [ix, iy, l > 0];
+  if (l) { ix /= l; iy /= l; return [ix, iy, true]; }
+  const s = sticks[p.id];
+  if (s) {
+    const dx = s.x - s.ox, dy = s.y - s.oy, d = Math.hypot(dx, dy);
+    if (d > 10) {
+      const m = Math.min(1, d / STICK_R);
+      return [dx / d * m, dy / d * m, true];
+    }
+  }
+  return [0, 0, false];
 }
 
 function onScreen(x, y, m = 0) {
@@ -413,7 +511,7 @@ function onScreen(x, y, m = 0) {
 function updateFoot(p, dt) {
   const [ix, iy, mv] = inputOf(p);
   p.moving = mv;
-  if (mv) { p.dir = { x: ix, y: iy }; p.walkT += dt * 11; }
+  if (mv) { const n = Math.hypot(ix, iy) || 1; p.dir = { x: ix / n, y: iy / n }; p.walkT += dt * 11; }
   const sp = 215 * (p.dizzy > 0 ? 0.45 : 1);
   p.x += ix * sp * dt;
   p.y += iy * sp * dt;
@@ -443,7 +541,7 @@ function updateFoot(p, dt) {
       p.fireCd = 1; p.wirbelCd = 3;
       sfx.board();
       burst(p.x, p.y, 25, ['#ffffff', '#cfe8ff', p.color], { g: 0 });
-      showBanner(`${p.name} fliegt! ${p.wirbelKey} = Wirbel-Notfalltaste!`, p.id === 1 ? '#8fc4ff' : '#ff9a9a', 5);
+      showBanner(touchMode ? `${p.name} fliegt! Regenbogen-Knopf = Wirbel!` : `${p.name} fliegt! ${p.wirbelKey} = Wirbel-Notfalltaste!`, p.id === 1 ? '#8fc4ff' : '#ff9a9a', 5);
     }
   }
 }
@@ -1572,7 +1670,7 @@ function drawHUD() {
       // Wirbel-Anzeige
       if (p.wirbelCd <= 0 && p.alt >= 1) {
         const blink = Math.sin(time * 8) > -0.3;
-        text(`${p.wirbelKey} = Wirbel!`, x + 70, 63, 16, blink ? '#fff59d' : '#ffb74d', 'left');
+        text(touchMode ? 'Wirbel-Knopf!' : `${p.wirbelKey} = Wirbel!`, x + 70, 63, 16, blink ? '#fff59d' : '#ffb74d', 'left');
       } else {
         const frac = 1 - p.wirbelCd / WIRBEL_CD;
         ctx.fillStyle = 'rgba(255,255,255,.25)'; rr(x + 70, 56, 120, 14, 7); ctx.fill();
@@ -1580,7 +1678,7 @@ function drawHUD() {
         ['#ff5252', '#ffeb3b', '#4caf50', '#2196f3', '#9c27b0'].forEach((c, i) => grd.addColorStop(i / 4, c));
         ctx.fillStyle = grd; rr(x + 70, 56, Math.max(14, 120 * frac), 14, 7); ctx.fill();
       }
-    } else text(left ? 'W A S D' : 'Pfeiltasten', x + 70, 63, 18, '#ddd', 'left');
+    } else text(touchMode ? (left ? 'linke Seite' : 'rechte Seite') : (left ? 'W A S D' : 'Pfeiltasten'), x + 70, 63, 18, '#ddd', 'left');
     const sx = x + 218, sy = 49;
     if (p.done) drawStar(sx, sy, 20, '#ffeb3b', time);
     else if (p.mode === 'jet' || !p.mouth) drawJet(sx, sy, -0.4, Object.assign({}, p, { char: undefined }), 0.42, false);
@@ -1635,6 +1733,52 @@ function drawHUD() {
     ctx.globalAlpha = 1;
   }
   if (muted) text('Ton aus (M)', VW - 20, VH - 20, 16, '#fff', 'right');
+  if (touchMode) drawTouchControls();
+}
+
+function drawTouchControls() {
+  for (const p of players) {
+    const s = sticks[p.id];
+    const [hx, hy] = STICK_HOME[p.id];
+    const ox = s ? s.ox : hx, oy = s ? s.oy : hy;
+    ctx.globalAlpha = s ? 0.55 : 0.28;
+    circle(ox, oy, STICK_R, '#ffffff');
+    ctx.strokeStyle = p.color; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.arc(ox, oy, STICK_R, 0, Math.PI * 2); ctx.stroke();
+    let kx = ox, ky = oy;
+    if (s) {
+      const dx = s.x - s.ox, dy = s.y - s.oy, d = Math.hypot(dx, dy);
+      const m = Math.min(d, STICK_R);
+      if (d > 0) { kx = ox + dx / d * m; ky = oy + dy / d * m; }
+    }
+    ctx.globalAlpha = s ? 0.9 : 0.5;
+    circle(kx, ky, 34, p.color);
+    text(String(p.id), kx, ky + 1, 30, '#fff', 'center', null);
+    ctx.globalAlpha = 1;
+    // Wirbel-Knopf
+    if (p.mode === 'jet' && !p.done) {
+      const [bx, by] = WIRBEL_BTN[p.id];
+      const ready = p.wirbelCd <= 0 && p.alt >= 1 && p.spin <= 0;
+      const pul = ready ? 1 + Math.sin(time * 6) * 0.07 : 1;
+      ctx.save(); ctx.translate(bx, by); ctx.scale(pul, pul);
+      circle(0, 0, 58, ready ? '#ffffff' : 'rgba(255,255,255,.35)');
+      const rb = ['#ff5252', '#ff9800', '#ffeb3b', '#4caf50', '#2196f3', '#9c27b0'];
+      const frac = ready ? 1 : 1 - p.wirbelCd / WIRBEL_CD;
+      ctx.globalAlpha = ready ? 1 : 0.6;
+      rb.forEach((c, i) => {
+        ctx.strokeStyle = c; ctx.lineWidth = 6;
+        ctx.beginPath(); ctx.arc(0, 0, 50 - i * 7, -Math.PI / 2 + (ready ? time * 3 : 0), -Math.PI / 2 + (ready ? time * 3 : 0) + Math.PI * 2 * frac); ctx.stroke();
+      });
+      ctx.globalAlpha = 1;
+      text('Wirbel', 0, 0, 20, ready ? '#7b1fa2' : '#555', 'center', '#fff', 4);
+      ctx.restore();
+    }
+  }
+  // Pause-Knopf
+  circle(PAUSE_BTN[0], PAUSE_BTN[1], 26, 'rgba(0,0,0,.45)');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(PAUSE_BTN[0] - 9, PAUSE_BTN[1] - 11, 6, 22);
+  ctx.fillRect(PAUSE_BTN[0] + 3, PAUSE_BTN[1] - 11, 6, 22);
 }
 
 function startButton(y, label) {
@@ -1674,7 +1818,11 @@ function drawTitle() {
     pp.x = cx - 30; pp.y = 345;
     drawPerson(pp);
     drawMouth(Object.assign({}, pp, { mouth: { x: cx + 25, y: 315, state: 'normal', t: 0 } }));
-    drawKeySet(cx, 410, id);
+    if (touchMode) {
+      circle(cx, 412, 42, 'rgba(255,255,255,.3)');
+      circle(cx + Math.cos(time * 2) * 18, 412 + Math.sin(time * 2) * 18, 20, pp.color);
+      text(id === 1 ? 'linke Seite' : 'rechte Seite', cx, 455, 18, '#fff');
+    } else drawKeySet(cx, 410, id);
   }
   const rx = VW / 2;
   ctx.fillStyle = 'rgba(0,0,0,.4)';
@@ -1690,8 +1838,8 @@ function drawTitle() {
     f();
     text(s, rx - 115, 240 + i * 52, 23, '#fff', 'left');
   });
-  startButton(560, 'LEERTASTE = Los geht\'s!');
-  text('Esc = Pause    M = Ton an/aus', VW / 2, 650, 20, '#ddd');
+  startButton(560, touchMode ? 'Tippen = Los geht\'s!' : 'LEERTASTE = Los geht\'s!');
+  text(touchMode ? 'Ein Handy, zwei Kinder: Jeder spielt auf seiner Bildschirmseite!' : 'Esc = Pause    M = Ton an/aus', VW / 2, 650, 20, '#ddd');
 }
 
 function drawSelect() {
@@ -1720,10 +1868,9 @@ function drawSelect() {
     // Pfeiltasten zum Blättern
     const L = id === 1 ? ['A', 'D', 'W', 'S'] : ['◀', '▶', '▲', '▼'];
     const nudge = Math.sin(time * 5) * 4;
-    text('◀', px + 40 - nudge, 300, 44, '#fff', 'center', pp.color, 6);
-    text('▶', px + 370 + nudge, 300, 44, '#fff', 'center', pp.color, 6);
-    drawKey(px + 40, 355, L[0]);
-    drawKey(px + 370, 355, L[1]);
+    text('◀', px + 40 - nudge, touchMode ? 320 : 300, touchMode ? 64 : 44, '#fff', 'center', pp.color, 6);
+    text('▶', px + 370 + nudge, touchMode ? 320 : 300, touchMode ? 64 : 44, '#fff', 'center', pp.color, 6);
+    if (!touchMode) { drawKey(px + 40, 355, L[0]); drawKey(px + 370, 355, L[1]); }
     // Farben
     const sw0 = cx - (SHIRTS.length - 1) * 22;
     SHIRTS.forEach((col, i) => {
@@ -1731,9 +1878,12 @@ function drawSelect() {
       if (i === c.shirt) { circle(sx, sy, 19, '#fff'); }
       circle(sx, sy, 15, col);
     });
-    drawKey(cx - 80, 548, L[2], 40);
-    drawKey(cx - 30, 548, L[3], 40);
-    text('= Farbe', cx + 40, 546, 22, '#fff', 'left');
+    if (touchMode) text('Farbe antippen', cx, 546, 22, '#fff');
+    else {
+      drawKey(cx - 80, 548, L[2], 40);
+      drawKey(cx - 30, 548, L[3], 40);
+      text('= Farbe', cx + 40, 546, 22, '#fff', 'left');
+    }
   }
   // Mitte: die bösen Bäume
   const mx = VW / 2;
@@ -1753,7 +1903,7 @@ function drawSelect() {
     text(n, mx - 80, y - 46, 24, '#fff', 'left');
     text(d, mx - 80, y - 18, 18, '#ddd', 'left');
   });
-  startButton(650, 'LEERTASTE = Los geht\'s!');
+  startButton(650, touchMode ? 'Hier tippen = Los geht\'s!' : 'LEERTASTE = Los geht\'s!');
 }
 
 function drawWin() {
@@ -1764,8 +1914,11 @@ function drawWin() {
   text(`Ihr habt Level ${level} geschafft!`, VW / 2, 300, 44, '#fff', 'center', '#1a237e', 9);
   for (let i = 0; i < 5; i++) drawStar(VW / 2 - 160 + i * 80, 380, 28, '#ffeb3b', time + i);
   if (stateT > 1.5) {
-    startButton(480, 'LEERTASTE = Nächstes Level');
-    text('F = Figuren wechseln', VW / 2, 560, 24, '#fff');
+    startButton(480, touchMode ? 'Tippen = Nächstes Level' : 'LEERTASTE = Nächstes Level');
+    if (touchMode) {
+      ctx.fillStyle = 'rgba(0,0,0,.45)'; rr(VW / 2 - 170, 538, 340, 54, 27); ctx.fill();
+      text('Figuren wechseln', VW / 2, 565, 26, '#fff');
+    } else text('F = Figuren wechseln', VW / 2, 560, 24, '#fff');
   }
 }
 
@@ -1773,7 +1926,23 @@ function drawPause() {
   ctx.fillStyle = 'rgba(0,0,0,.5)';
   ctx.fillRect(0, 0, VW, VH);
   text('Pause', VW / 2, VH / 2 - 30, 90, '#fff');
-  text('Drücke LEERTASTE zum Weiterspielen', VW / 2, VH / 2 + 50, 30, '#ffe14d');
+  text(touchMode ? 'Tippen zum Weiterspielen' : 'Drücke LEERTASTE zum Weiterspielen', VW / 2, VH / 2 + 50, 30, '#ffe14d');
+}
+
+function drawRotateHint(dpr) {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = 'rgba(20,40,22,.94)';
+  ctx.fillRect(0, 0, innerWidth, innerHeight);
+  const cx = innerWidth / 2, cy = innerHeight / 2;
+  const s = Math.min(innerWidth, 500) / 400;
+  ctx.save();
+  ctx.translate(cx, cy - 60 * s);
+  ctx.rotate(-Math.PI / 2 * clamp((Math.sin(time * 2) + 0.3) * 1.2, 0, 1));
+  ctx.fillStyle = '#fff'; rr(-35 * s, -60 * s, 70 * s, 120 * s, 12 * s); ctx.fill();
+  ctx.fillStyle = '#7cc35a'; rr(-28 * s, -50 * s, 56 * s, 100 * s, 6 * s); ctx.fill();
+  ctx.restore();
+  text('Bitte das Handy', cx, cy + 50 * s, 30 * s, '#ffe14d');
+  text('quer halten!', cx, cy + 90 * s, 30 * s, '#ffe14d');
 }
 
 // ---------------- Hauptschleife ----------------
@@ -1808,6 +1977,8 @@ function frame(now) {
   if (state === 'win') drawWin();
 
   ctx.restore();
+  if (state !== 'play') { sticks[1] = null; sticks[2] = null; }
+  if (touchMode && innerHeight > innerWidth) drawRotateHint(dpr);
   requestAnimationFrame(frame);
 }
 
